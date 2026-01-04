@@ -46,9 +46,9 @@ def handle_callback(callback):
             send_telegram_message(f"❌ Ошибка в данных: {data}")
             return
 
-        from trader import place_trade_confirmed
+        from trader import place_trade_with_tp_sl
 
-        result = place_trade_confirmed(symbol, amount, tp_pct, sl_pct)
+        result = place_trade_with_tp_sl(symbol, amount, tp_pct, sl_pct, skip_risk_check=False)
 
         if result.get("message"):
             msg = (

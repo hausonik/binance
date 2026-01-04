@@ -1,7 +1,7 @@
 from binance.client import Client
 import os
 from dotenv import load_dotenv
-from notifier import send_telegram_message
+from telegram_bot import send_telegram_message
 
 # Загружаем .env
 load_dotenv()

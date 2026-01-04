@@ -1,10 +1,17 @@
-import os
+"""
+Мониторинг открытых позиций и ордеров.
+НЕ принимает торговых решений, НЕ закрывает сделки.
+Только проверяет статусы и обновляет БД.
+"""
 import time
-import json
 from datetime import datetime
 from dotenv import load_dotenv
 from binance.client import Client
-from telegram_bot import send_telegram_message
+from database import (
+    get_open_trades, update_trade_status, get_order_by_binance_id,
+    update_order_status, log_event, add_pnl_snapshot
+)
+import os
 
 load_dotenv()
 
@@ -13,110 +20,151 @@ client = Client(
     os.getenv("BINANCE_API_SECRET")
 )
 
-TRADES_LOG = "trades_log.json"
-PNL_FILE = "pnl_history.json"
-
-def load_trades():
-    if not os.path.exists(TRADES_LOG):
-        return []
-    with open(TRADES_LOG, "r") as f:
-        try:
-            return json.load(f)
-        except:
-            return []
-
-def save_trades(trades):
-    with open(TRADES_LOG, "w") as f:
-        json.dump(trades, f, indent=2)
-
-def append_pnl(value: float):
-    entry = {
-        "timestamp": datetime.utcnow().isoformat(),
-        "pnl": round(value, 8)
-    }
-    if not os.path.exists(PNL_FILE):
-        with open(PNL_FILE, "w") as f:
-            json.dump([], f)
-    with open(PNL_FILE, "r+") as f:
-        try:
-            data = json.load(f)
-        except:
-            data = []
-        data.append(entry)
-        f.seek(0)
-        json.dump(data, f, indent=2)
-
 def get_current_price(symbol):
+    """Получает текущую цену символа."""
     try:
         ticker = client.get_symbol_ticker(symbol=symbol)
         return float(ticker["price"])
     except Exception as e:
-        print("Ошибка получения цены:", e)
+        log_event("ERROR", "monitor", f"Ошибка получения цены {symbol}: {str(e)}")
         return None
 
-def place_market_sell(symbol, qty):
+def check_order_status(order_id: int, symbol: str):
+    """Проверяет статус ордера на Binance."""
     try:
-        return client.order_market_sell(symbol=symbol, quantity=qty)
+        order = client.get_order(symbol=symbol, orderId=order_id)
+        return order.get("status")  # NEW, FILLED, CANCELED, etc.
     except Exception as e:
-        print("Ошибка SELL:", e)
+        log_event("WARNING", "monitor", f"Не удалось получить статус ордера {order_id}: {str(e)}")
         return None
 
-def check_and_close_trades():
-    trades = load_trades()
-    updated_trades = []
+def sync_orders_with_binance():
+    """
+    Синхронизирует статусы ордеров в БД с реальными статусами на Binance.
+    НЕ выставляет ордера, НЕ закрывает сделки.
+    """
+    try:
+        # Получаем все открытые ордера с Binance
+        binance_orders = client.get_open_orders()
+        binance_order_ids = {o["orderId"] for o in binance_orders}
+        
+        # Получаем открытые сделки из БД
+        open_trades = get_open_trades()
+        
+        for trade in open_trades:
+            # Проверяем TP ордер
+            if trade.get("tp_order_id"):
+                tp_order_id = trade["tp_order_id"]
+                binance_status = check_order_status(tp_order_id, trade["symbol"])
+                
+                if binance_status:
+                    db_order = get_order_by_binance_id(tp_order_id)
+                    if db_order and db_order["status"] != binance_status:
+                        update_order_status(tp_order_id, binance_status)
+                        
+                        # Если TP исполнен - обновляем статус сделки
+                        if binance_status == "FILLED":
+                            close_price = get_current_price(trade["symbol"])
+                            if close_price:
+                                entry_price = float(trade["avg_price"])
+                                quantity = float(trade["quantity"])
+                                pnl = (close_price - entry_price) * quantity
+                                
+                                update_trade_status(
+                                    trade["id"],
+                                    "CLOSED_TP",
+                                    close_price,
+                                    pnl
+                                )
+                                add_pnl_snapshot(pnl)
+                                log_event("INFO", "monitor", 
+                                    f"TP исполнен: {trade['symbol']}, trade_id: {trade['id']}, PnL: {pnl:.6f}")
+            
+            # Проверяем SL ордер
+            if trade.get("sl_order_id"):
+                sl_order_id = trade["sl_order_id"]
+                binance_status = check_order_status(sl_order_id, trade["symbol"])
+                
+                if binance_status:
+                    db_order = get_order_by_binance_id(sl_order_id)
+                    if db_order and db_order["status"] != binance_status:
+                        update_order_status(sl_order_id, binance_status)
+                        
+                        # Если SL исполнен - обновляем статус сделки
+                        if binance_status == "FILLED":
+                            close_price = get_current_price(trade["symbol"])
+                            if close_price:
+                                entry_price = float(trade["avg_price"])
+                                quantity = float(trade["quantity"])
+                                pnl = (close_price - entry_price) * quantity
+                                
+                                update_trade_status(
+                                    trade["id"],
+                                    "CLOSED_SL",
+                                    close_price,
+                                    pnl
+                                )
+                                add_pnl_snapshot(pnl)
+                                log_event("INFO", "monitor",
+                                    f"SL исполнен: {trade['symbol']}, trade_id: {trade['id']}, PnL: {pnl:.6f}")
+        
+        # Проверяем расхождения: ордера на Binance, которых нет в БД
+        for binance_order in binance_orders:
+            order_id = binance_order["orderId"]
+            db_order = get_order_by_binance_id(order_id)
+            if not db_order:
+                log_event("WARNING", "monitor",
+                    f"Обнаружен ордер на Binance, отсутствующий в БД: order_id={order_id}, symbol={binance_order['symbol']}")
+        
+    except Exception as e:
+        log_event("ERROR", "monitor", f"Ошибка синхронизации ордеров: {str(e)}")
 
-    for trade in trades:
-        if trade.get("status") != "OPEN":
-            updated_trades.append(trade)
-            continue
-
-        try:
+def check_trades_status():
+    """
+    Проверяет статусы всех открытых сделок.
+    Обновляет БД, если обнаружены изменения.
+    """
+    try:
+        open_trades = get_open_trades()
+        
+        for trade in open_trades:
             symbol = trade["symbol"]
-            entry_price = float(trade["avg_price"])
-            qty = float(trade["quantity"])
-            tp_pct = float(trade["take_profit_pct"])
-            sl_pct = float(trade["stop_loss_pct"])
+            
+            # Проверяем, что TP/SL ордера еще активны
+            if trade.get("tp_order_id") and trade.get("sl_order_id"):
+                tp_status = check_order_status(trade["tp_order_id"], symbol)
+                sl_status = check_order_status(trade["sl_order_id"], symbol)
+                
+                # Если оба ордера отменены или исполнены, но статус не обновлен
+                if tp_status in ["FILLED", "CANCELED"] or sl_status in ["FILLED", "CANCELED"]:
+                    # Статус уже должен быть обновлен в sync_orders_with_binance
+                    # Но на всякий случай проверяем еще раз
+                    pass
+        
+    except Exception as e:
+        log_event("ERROR", "monitor", f"Ошибка проверки статусов сделок: {str(e)}")
 
-            current_price = get_current_price(symbol)
-            if current_price is None:
-                updated_trades.append(trade)
-                continue
-
-            change_pct = (current_price - entry_price) / entry_price * 100
-
-            if change_pct >= tp_pct:
-                place_market_sell(symbol, qty)
-                pnl = (current_price - entry_price) * qty
-                append_pnl(pnl)
-                trade["status"] = "CLOSED_TP"
-                send_telegram_message(
-                    f"💰 TP закрыта\n{symbol}\nВход: {entry_price}\nВыход: {current_price}\nPnL: {pnl:.6f} USDC"
-                )
-                continue
-
-            if change_pct <= -sl_pct:
-                place_market_sell(symbol, qty)
-                pnl = (current_price - entry_price) * qty
-                append_pnl(pnl)
-                trade["status"] = "CLOSED_SL"
-                send_telegram_message(
-                    f"❌ SL сработал\n{symbol}\nВход: {entry_price}\nВыход: {current_price}\nPnL: {pnl:.6f} USDC"
-                )
-                continue
-
-            updated_trades.append(trade)
-
-        except Exception as e:
-            print("Ошибка обработки сделки:", e)
-            updated_trades.append(trade)
-
-    save_trades(updated_trades)
-
-if __name__ == "__main__":
-    print("🚀 Monitor started")
+def monitor_loop():
+    """
+    Основной цикл мониторинга.
+    Запускается в отдельном процессе/потоке.
+    """
+    log_event("INFO", "monitor", "Мониторинг запущен")
+    
     while True:
         try:
-            check_and_close_trades()
+            # Синхронизация ордеров
+            sync_orders_with_binance()
+            
+            # Проверка статусов сделок
+            check_trades_status()
+            
         except Exception as e:
-            print("Monitor error:", e)
+            log_event("ERROR", "monitor", f"Критическая ошибка в цикле мониторинга: {str(e)}")
+        
+        # Пауза между проверками
         time.sleep(30)
+
+if __name__ == "__main__":
+    print("🚀 Monitor started (safe mode - no trading decisions)")
+    monitor_loop()

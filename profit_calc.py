@@ -1,12 +1,9 @@
-import json
-from collections import deque
+"""
+Расчет прибыли по периодам.
+Работает с БД вместо JSON.
+"""
 from datetime import datetime, timedelta
-
-LOG_FILE = "trades_log.json"
-
-def load_trades():
-    with open(LOG_FILE, "r") as f:
-        return json.load(f)
+from database import get_all_trades
 
 def filter_trades_by_period(trades, period):
     """
@@ -15,7 +12,7 @@ def filter_trades_by_period(trades, period):
     - week: текущая неделя
     - month: текущий месяц
     - year: текущий год
-    - none: всё
+    - all: всё
     """
     now = datetime.utcnow()
 
@@ -32,55 +29,48 @@ def filter_trades_by_period(trades, period):
 
     filtered = []
     for t in trades:
-        t_time = datetime.fromisoformat(t["timestamp"])
-        if t_time >= since:
-            filtered.append(t)
+        try:
+            t_time = datetime.fromisoformat(t["created_at"].replace("Z", "+00:00"))
+            if t_time >= since:
+                filtered.append(t)
+        except:
+            continue
     return filtered
 
 def calculate_profit(trades):
     """
-    Реализованный PnL по FIFO
+    Реализованный PnL по закрытым сделкам.
+    Использует поле pnl из БД для закрытых сделок.
     """
-    trades_by_symbol = {}
-    for t in trades:
-        sym = t["symbol"]
-        trades_by_symbol.setdefault(sym, []).append(t)
-
     pnl_result = {}
-    for sym, trs in trades_by_symbol.items():
-        buy_queue = deque()
-        realized_pnl = 0
-
-        for t in trs:
-            side = t["side"]
-            price = t["price"]
-            qty = t["quantity"]
-            fee = t["fee"]
-
-            if side == "BUY":
-                buy_queue.append({"price": price, "qty": qty})
-            elif side == "SELL":
-                remaining = qty
-                while remaining > 0 and buy_queue:
-                    lot = buy_queue[0]
-                    buy_price = lot["price"]
-                    buy_qty = lot["qty"]
-
-                    matched = min(remaining, buy_qty)
-                    pnl = (price - buy_price) * matched
-                    realized_pnl += pnl
-
-                    lot["qty"] -= matched
-                    remaining -= matched
-
-                    if lot["qty"] == 0:
-                        buy_queue.popleft()
-
-        pnl_result[sym] = round(realized_pnl, 8)
-
+    total_pnl = 0.0
+    
+    for t in trades:
+        # Учитываем только закрытые сделки с рассчитанным PnL
+        if t.get("status") in ["CLOSED_TP", "CLOSED_SL", "CLOSED_MANUAL"]:
+            symbol = t["symbol"]
+            pnl = float(t.get("pnl", 0))
+            
+            if symbol not in pnl_result:
+                pnl_result[symbol] = 0.0
+            
+            pnl_result[symbol] += pnl
+            total_pnl += pnl
+    
+    # Округляем результаты
+    for symbol in pnl_result:
+        pnl_result[symbol] = round(pnl_result[symbol], 8)
+    
+    # Добавляем общий PnL
+    pnl_result["TOTAL"] = round(total_pnl, 8)
+    
     return pnl_result
 
 def get_profit_by_period(period="all"):
-    trades = load_trades()
+    """
+    Возвращает прибыль по периодам.
+    Работает с БД.
+    """
+    trades = get_all_trades()
     filtered = filter_trades_by_period(trades, period)
     return calculate_profit(filtered)
