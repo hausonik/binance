@@ -1,0 +1,72 @@
+[
+  {
+    "symbol": "BTCUSDC",
+    "side": "BUY",
+    "spent_usdc": 5.0,
+    "avg_price": 91203.01,
+    "quantity": "0.00005000",
+    "take_profit_pct": 1.5,
+    "stop_loss_pct": 1.0,
+    "timestamp": "2026-01-04T18:44:58.596068",
+    "status": "OPEN"
+  },
+  {
+    "symbol": "BTCUSDC",
+    "side": "BUY",
+    "spent_usdc": 5.0,
+    "avg_price": 91159.91,
+    "quantity": "0.00005000",
+    "take_profit_pct": 1.5,
+    "stop_loss_pct": 1.0,
+    "timestamp": "2026-01-04T18:48:52.857583",
+    "status": "OPEN"
+  },
+  {
+    "symbol": "BTCUSDC",
+    "side": "BUY",
+    "spent_usdc": 5.0,
+    "avg_price": 91032.36,
+    "quantity": "0.00005000",
+    "take_profit_pct": 1.5,
+    "stop_loss_pct": 1.0,
+    "timestamp": "2026-01-04T19:19:56.039219",
+    "status": "OPEN"
+  },
+  {
+    "symbol": "BTCUSDC",
+    "side": "BUY",
+    "spent_usdc": 6.0,
+    "avg_price": 91102.0,
+    "quantity": "0.00006000",
+    "take_profit_pct": 1.5,
+    "stop_loss_pct": 1.0,
+    "timestamp": "2026-01-04T19:27:25.811446",
+    "status": "OPEN"
+  },
+  {
+    "symbol": "BTCUSDC",
+    "side": "BUY",
+    "spent_usdc": 6.0,
+    "avg_price": 91061.0,
+    "quantity": "0.00006000",
+    "take_profit_pct": 1.5,
+    "stop_loss_pct": 1.0,
+    "timestamp": "2026-01-04T19:48:18.880820",
+    "status": "OPEN"
+  },
+  {
+    "symbol": "BTCUSDC",
+    "side": "BUY",
+    "avg_price": 91202.39,
+    "quantity": "0.00016000",
+    "take_profit_pct": 1.5,
+    "stop_loss_pct": 1.0,
+    "tp_order_id": 7718765788,
+    "sl_order_id": 7718765803,
+    "tp_price": 92570.42,
+    "sl_stop": 90290.36,
+    "sl_limit": 89838.90000000001,
+    "timestamp": "2026-01-04T20:10:28.045658",
+    "status": "OPEN_SL_TP"
+  }
+]
